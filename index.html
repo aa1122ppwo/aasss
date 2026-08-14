@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>كاميرا مراقبة مع تسجيلات المشرف</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex items-center justify-center p-4">
+
+    <div class="max-w-md w-full bg-gray-800 rounded-2xl shadow-2xl p-6 text-center border border-gray-700">
+        <h1 class="text-2xl font-bold mb-6 text-blue-400">🛡️ نظام مراقبة ذكي</h1>
+
+        <!-- الشاشة الرئيسية (الاختيارات) -->
+        <div id="setup-screen" class="space-y-4">
+            <button onclick="setupViewer()" class="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold transition shadow-lg">أنا المشاهد (توليد رقم سري)</button>
+            <button onclick="setupCamera()" class="w-full bg-emerald-600 hover:bg-emerald-500 py-4 rounded-xl font-bold transition shadow-lg">أنا الكاميرا (إدخال الرقم)</button>
+            <button onclick="showAdminLogin()" class="w-full bg-purple-600 hover:bg-purple-500 py-4 rounded-xl font-bold transition shadow-lg">🔐 لوحة المشرف (التسجيلات)</button>
+        </div>
+
+        <!-- شاشة تسجيل دخول المشرف -->
+        <div id="admin-login-screen" class="hidden space-y-4">
+            <h2 class="text-xl font-bold text-purple-400 mb-2">تسجيل دخول المشرف</h2>
+            <input type="password" id="admin-pass" placeholder="أدخل كلمة المرور" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-center text-white focus:outline-none focus:border-purple-500">
+            <button onclick="verifyAdmin()" class="w-full bg-purple-600 hover:bg-purple-500 py-3 rounded-xl font-bold transition">دخول</button>
+            <button onclick="goHome()" class="w-full bg-gray-700 hover:bg-gray-600 py-2 rounded-lg text-sm transition">رجوع</button>
+        </div>
+
+        <!-- لوحة تحكم المشرف (عرض التسجيلات) -->
+        <div id="admin-dashboard" class="hidden space-y-4 text-right">
+            <div class="flex justify-between items-center mb-2">
+                <button onclick="goHome()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs transition">الرئيسية</button>
+                <h2 class="text-lg font-bold text-purple-400">📁 سجلات الكاميرا</h2>
+            </div>
+            <div id="recordings-list" class="space-y-3 max-h-96 overflow-y-auto pr-1">
+                <p class="text-gray-400 text-center text-sm py-4">جاري تحميل التسجيلات...</p>
+            </div>
+        </div>
+
+        <!-- شاشة المشاهد -->
+        <div id="viewer-screen" class="hidden space-y-4">
+            <p class="text-gray-400 text-sm">شارك هذا الرقم مع هاتف الكاميرا:</p>
+            <div id="session-code" class="text-3xl font-mono text-yellow-400 font-bold bg-black p-3 rounded-lg border border-yellow-500">جاري التوليد...</div>
+            <div class="relative rounded-xl bg-black aspect-[3/4] shadow-inner overflow-hidden">
+                <video id="remote-video" autoplay playsinline class="w-full h-full object-cover"></video>
+                <div id="rec-indicator" class="absolute top-3 right-3 bg-red-600 text-white text-xs px-2 py-1 rounded-full font-bold hidden animate-pulse">🔴 جاري التسجيل...</div>
+            </div>
+            <button onclick="goHome()" class="w-full bg-gray-700 hover:bg-gray-600 py-2 rounded-lg text-sm transition">إنهاء وإعادة ضبط</button>
+        </div>
+
+        <!-- شاشة الكاميرا -->
+        <div id="camera-screen" class="hidden space-y-4">
+            <input type="text" id="code-input" placeholder="أدخل الرقم السري" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-4 text-center font-mono text-xl text-white focus:outline-none focus:border-emerald-500">
+            <button onclick="startCamera()" class="w-full bg-emerald-600 hover:bg-emerald-500 py-4 rounded-xl font-bold transition">بدء بث الكاميرا</button>
+            <button onclick="goHome()" class="w-full bg-gray-700 hover:bg-gray-600 py-2 rounded-lg text-sm transition">رجوع</button>
+            <video id="local-video" autoplay playsinline muted class="hidden"></video>
+        </div>
+    </div>
+
+    <!-- إعداد وربط Firebase -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyD1jTqkiQvTX1YfVyiA6bH1t9VfHevhKow",
+            authDomain: "banatjo2828.firebaseapp.com",
+            projectId: "banatjo2828",
+            storageBucket: "banatjo2828.firebasestorage.app",
+            messagingSenderId: "1051130291618",
+            appId: "1:1051130291618:web:3344f448770c8516d7befb",
+            measurementId: "G-FD1RGD4T87"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
+    </script>
+
+    <script>
+        let peer;
+        const code = 'cam-' + Math.floor(1000 + Math.random() * 9000);
+        let db;
+        let mediaRecorder;
+        let recordedChunks = [];
+
+        // إعداد قاعدة البيانات المحلية IndexedDB لحفظ الفيديوهات والتسجيلات مع الوقت والتاريخ
+        const request = indexedDB.open('CameraSurveillanceDB', 1);
+        request.onupgradeneeded = function(event) {
+            db = event.target.result;
+            if (!db.objectStoreNames.contains('recordings')) {
+                db.createObjectStore('recordings', { keyPath: 'id', autoIncrement: true });
+            }
+        };
+        request.onsuccess = function(event) {
+            db = event.target.result;
+        };
+
+        function saveRecordingToDB(blob, dateTimeStr) {
+            if (!db) return;
+            const transaction = db.transaction(['recordings'], 'readwrite');
+            const store = transaction.objectStore('recordings');
+            store.add({ blob: blob, datetime: dateTimeStr });
+        }
+
+        function goHome() {
+            if (peer) peer.destroy();
+            location.reload();
+        }
+
+        // إعداد وضع المشاهد (ينشئ الغرفة)
+        function setupViewer() {
+            document.getElementById('setup-screen').classList.add('hidden');
+            document.getElementById('viewer-screen').classList.remove('hidden');
+            document.getElementById('session-code').innerText = code;
+            
+            peer = new Peer(code);
+            peer.on('call', (call) => {
+                navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+                    call.answer(stream);
+                    call.on('stream', remoteStream => {
+                        const remoteVideo = document.getElementById('remote-video');
+                        remoteVideo.srcObject = remoteStream;
+
+                        // بدء التسجيل التلقائي للبث الحي عند اتصال الكاميرا
+                        startRecordingStream(remoteStream);
+                    });
+                });
+            });
+        }
+
+        function startRecordingStream(stream) {
+            recordedChunks = [];
+            try {
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+            } catch (e) {
+                try { mediaRecorder = new MediaRecorder(stream); } catch(err) { console.error(err); return; }
+            }
+
+            mediaRecorder.ondataavailable = function(event) {
+                if (event.data && event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = function() {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const now = new Date();
+                const dateTimeStr = now.toLocaleDateString('ar-EG') + ' | ' + now.toLocaleTimeString('ar-EG');
+                saveRecordingToDB(blob, dateTimeStr);
+            };
+
+            mediaRecorder.start();
+            document.getElementById('rec-indicator').classList.remove('hidden');
+        }
+
+        // إعداد وضع الكاميرا (يتصل بالغرفة)
+        function setupCamera() {
+            document.getElementById('setup-screen').classList.add('hidden');
+            document.getElementById('camera-screen').classList.remove('hidden');
+            peer = new Peer();
+        }
+
+        async function startCamera() {
+            const targetCode = document.getElementById('code-input').value.trim();
+            if (!targetCode) {
+                alert("الرجاء إدخال الرقم السري");
+                return;
+            }
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
+                const call = peer.call(targetCode, stream);
+                alert("تم الاتصال بنجاح وبدء البث!");
+            } catch (err) {
+                alert("تعذر الوصول للكاميرا، تأكد من الصلاحيات.");
+            }
+        }
+
+        // وظائف لوحة المشرف
+        function showAdminLogin() {
+            document.getElementById('setup-screen').classList.add('hidden');
+            document.getElementById('admin-login-screen').classList.remove('hidden');
+        }
+
+        function verifyAdmin() {
+            const pass = document.getElementById('admin-pass').value;
+            if (pass === 'ooddaayy') {
+                document.getElementById('admin-login-screen').classList.add('hidden');
+                document.getElementById('admin-dashboard').classList.remove('hidden');
+                loadRecordings();
+            } else {
+                alert("كلمة المرور غير صحيحة!");
+            }
+        }
+
+        function loadRecordings() {
+            const listEl = document.getElementById('recordings-list');
+            listEl.innerHTML = '';
+            
+            if (!db) {
+                listEl.innerHTML = '<p class="text-gray-400 text-center text-sm">قاعدة البيانات لم تكتمل التحميل بعد.</p>';
+                return;
+            }
+
+            const transaction = db.transaction(['recordings'], 'readonly');
+            const store = transaction.objectStore('recordings');
+            const requestAll = store.getAll();
+
+            requestAll.onsuccess = function() {
+                const records = requestAll.result;
+                if (records.length === 0) {
+                    listEl.innerHTML = '<p class="text-gray-400 text-center text-sm py-4">لا توجد تسـجيلات محفوظة حتى الآن.</p>';
+                    return;
+                }
+
+                records.reverse().forEach((rec) => {
+                    const videoUrl = URL.createObjectURL(rec.blob);
+                    const card = document.createElement('div');
+                    card.className = 'bg-gray-900 p-3 rounded-xl border border-gray-700 space-y-2';
+                    card.innerHTML = `
+                        <div class="flex justify-between items-center text-xs text-yellow-400 font-mono">
+                            <span>📅 ${rec.datetime}</span>
+                        </div>
+                        <video src="${videoUrl}" controls class="w-full rounded-lg bg-black max-h-48"></video>
+                        <div class="flex gap-2">
+                            <a href="${videoUrl}" download="recording_${Date.now()}.webm" class="flex-1 bg-blue-600 hover:bg-blue-500 text-center py-1.5 rounded-lg text-xs font-bold transition">تحميل الفيديو</a>
+                            <button onclick="deleteRecord(${rec.id})" class="bg-red-600 hover:bg-red-500 px-3 py-1.5 rounded-lg text-xs font-bold transition">حذف</button>
+                        </div>
+                    `;
+                    listEl.appendChild(card);
+                });
+            };
+        }
+
+        function deleteRecord(id) {
+            if (!confirm("هل أنت متأكد من حذف هذا التسجيل؟")) return;
+            const transaction = db.transaction(['recordings'], 'readwrite');
+            const store = transaction.objectStore('recordings');
+            const requestDel = store.delete(id);
+            requestDel.onsuccess = function() {
+                loadRecordings();
+            };
+        }
+    </script>
+</body>
+</html>
